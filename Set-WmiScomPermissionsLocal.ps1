@@ -2,7 +2,9 @@
 # Sets WMI, DCOM, SCManager, and Performance Manager permissions for the designated monitoring user.
 # Script must be run locally.  Local execution of scripts must be enabled on the target system (Set-ExecutionPolicy RemoteSigned)
 
-$DefaultMonitoringUser = "logicmonitor"
+# Update the $DefaultMonitoringUser variable with the monitoring account for your environment.
+# For local accounts, use the samAccountName only. For domain accounts, use CONTOSO\username
+$DefaultMonitoringUser = "CONTOSO\username"
 
 
 Function Set-CustomPermissions {
