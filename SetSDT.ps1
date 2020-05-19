@@ -349,8 +349,11 @@ if($thisDeviceHasMyNameCount -eq 1)
 	# 2b. Need to call API to set uptime SDT using deviceId *AND* WinSystemUptime DataSourceName
 	###############################################################################
 	
-	# Only the $data will need to change, then call the LmRestApi using the function
+	# Set the options, then call the LmRestApi using the function
 	if ($SetUptimeSDT) {
+	    $httpVerb = 'POST'
+	    $resourcePath = '/sdt/sdts'
+	    $queryParams = ''
 	    $data = '{"sdtType":1,"type":"DeviceDataSourceSDT","deviceId":' + $myDeviceID + ',"dataSourceName":"WinSystemUptime","comment":"SDT for graceful shutdown","startDateTime":' + $epoch + ',"endDateTime":' + $uptimeEndTime + '}';
         $Sdt2Response = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
 
