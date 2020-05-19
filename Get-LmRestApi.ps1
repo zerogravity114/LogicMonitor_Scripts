@@ -12,9 +12,9 @@
         [bool]$printResponse = $false
     )
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    # $epoch = [Math]::Round((New-TimeSpan -start (Get-Date -Date "1/1/1970") -end (Get-Date).ToUniversalTime()).TotalMilliseconds)
-    # $data = $data | ConvertTo-Json
-
+    # If an epoch value was not provided, generate one
+    if ([string]::IsNullOrEmpty($epoch)){$epoch = [Math]::Round((New-TimeSpan -start (Get-Date -Date "1/1/1970") -end (Get-Date).ToUniversalTime()).TotalMilliseconds)}
+ 
     #Construct URL
     $url = 'https://' + $company + '.logicmonitor.com/santaba/rest' + $resourcePath + $queryParams
     
