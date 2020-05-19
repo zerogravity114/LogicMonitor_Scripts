@@ -55,6 +55,28 @@ $accessId = '1234567890'
 $accessKey = '1234567890-=-0987654321'
 $company = 'portalname'
 
+
+<#
+###############################################################################
+# We want to add SDT to the device whose system.sysname matches $env:computername
+#  **AND** who has at least one IP match with system.ips
+# System name for Windows should be unique on a network, **but** there may be multiple
+#  networks within LM so there is a **slender** chance that this might not be
+#  enough. Adding a check for matching IPs reduces likelihood of having multiple matches.
+# 1. Need to call API to find deviceId
+# 2a. Need to call API to set all-device SDT using deviceId
+# 2b. Need to call API to set uptime SDT using deviceId *AND* WinSystemUptime DataSourceName
+# 3. Need to call API to set OpsNote using deviceId
+#
+###############################################################################
+#>
+## Set Device downtime for the entire device for $minutes during reboot (requires acknowledge device permissions)
+[bool]$SetDeviceSDT = $true
+# Set SDT on the Windows Uptime datasource for 1 hour (requires acknowledge device permissions)
+[bool]$SetUptimeSDT = $true
+# Set an Ops note on the device at reboot time (requires manage ops notes permission)
+[bool]$SetOpsNote = $true
+####Obtain Environment Variables
 # Device systemname:
 $computerName = $env:computername
 
@@ -63,6 +85,17 @@ $computerName = $env:computername
 $ipsquery = "select IPADDRESS from Win32_NetworkAdapterConfiguration where IPENABLED = true"
 $wqlips = Get-WmiObject -Query $ipsquery | select-object -expand IPADDRESS
 
+# Get current time of epoch in milliseconds
+$epoch = [Math]::Round((New-TimeSpan -start (Get-Date -Date "1/1/1970") -end (Get-Date).ToUniversalTime()).TotalMilliseconds)
+
+# Get device SDT end time in milliseconds (epoch plus 5 * 60 * 1000)
+# 5 minutes should be ample to cover the actual restart:
+[int]$minutes = 5
+$deviceEndTime = $epoch + ($minutes*60*1000)
+
+# Get uptime SDT end time in milliseconds (epoch plus 65 * 60 * 1000)
+# 65 minutes should be ample to cover the expected uptime alert which is < 1 hour by default.
+$uptimeEndTime = $epoch + (65*60*1000)
 
 <## >
 # For Debug:
@@ -86,9 +119,8 @@ Function Get-LmRestApi {
     )
     ## Configure security to force TLS 1.2###
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    # $epoch = [Math]::Round((New-TimeSpan -start (Get-Date -Date "1/1/1970") -end (Get-Date).ToUniversalTime()).TotalMilliseconds)
-    # $data = $data | ConvertTo-Json
-
+    # If an epoch value was not provided, generate one
+    if ([string]::IsNullOrEmpty($epoch)){$epoch = [Math]::Round((New-TimeSpan -start (Get-Date -Date "1/1/1970") -end (Get-Date).ToUniversalTime()).TotalMilliseconds)}
     #Construct URL
     $url = 'https://' + $company + '.logicmonitor.com/santaba/rest' + $resourcePath + $queryParams
     
@@ -124,33 +156,6 @@ Function Get-LmRestApi {
     return $response
 }
 
-
-<#
-###############################################################################
-# We want to add SDT to the device whose system.sysname matches $env:computername
-#  **AND** who has at least one IP match with system.ips
-# System name for Windows should be unique on a network, **but** there may be multiple
-#  networks within LM so there is a **slender** chance that this might not be
-#  enough. Adding a check for matching IPs reduces likelihood of having multiple matches.
-# 1. Need to call API to find deviceId
-# 2a. Need to call API to set all-device SDT using deviceId
-# 2b. Need to call API to set uptime SDT using deviceId *AND* WinSystemUptime DataSourceName
-# 3. Need to call API to set OpsNote using deviceId
-#
-###############################################################################
-#>
-
-# Get current time of epoch in milliseconds
-$epoch = [Math]::Round((New-TimeSpan -start (Get-Date -Date "1/1/1970") -end (Get-Date).ToUniversalTime()).TotalMilliseconds)
-
-# Get device SDT end time in milliseconds (epoch plus 5 * 60 * 1000)
-# 5 minutes should be ample to cover the actual restart:
-[int]$minutes = 5
-$deviceEndTime = $epoch + ($minutes*60*1000)
-
-# Get uptime SDT end time in milliseconds (epoch plus 65 * 60 * 1000)
-# 65 minutes should be ample to cover the expected uptime alert which is < 1 hour by default.
-$uptimeEndTime = $epoch + (65*60*1000)
 
 ###############################################################################
 # 1. Need to call API to find deviceId
@@ -321,61 +326,66 @@ if($thisDeviceHasMyNameCount -eq 1)
 	###############################################################################
 
 	# request details
-	$httpVerb = 'POST'
-	$resourcePath = '/sdt/sdts'
-	$queryParams = ''
-	$data = '{"sdtType":1,"type":"DeviceSDT","deviceId":' + $myDeviceID + ',"comment":"SDT for graceful shutdown","startDateTime":' + $epoch + ',"endDateTime":' + $deviceEndTime + '}';
+    if ($SetDeviceSDT) {
+	    $httpVerb = 'POST'
+	    $resourcePath = '/sdt/sdts'
+	    $queryParams = ''
+	    $data = '{"sdtType":1,"type":"DeviceSDT","deviceId":' + $myDeviceID + ',"comment":"SDT for graceful shutdown","startDateTime":' + $epoch + ',"endDateTime":' + $deviceEndTime + '}';
 
-    $SdtResponse = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
+        $SdtResponse = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
 	
-	# Find status and body of response
-	$status = $SdtResponse.status
-	$body = $SdtResponse.data | ConvertTo-Json -Depth 5
+	    # Find status and body of response
+	    $status = $SdtResponse.status
+	    $body = $SdtResponse.data | ConvertTo-Json -Depth 5
 
-	<## >
-	# For Debug:
-	Write-Host "Status:$status"
-	Write-Host "Response:$body"
-	<##>
+	    <## >
+	    # For Debug:
+	    Write-Host "Status:$status"
+	    Write-Host "Response:$body"
+	    <##>
+    }
 
 	###############################################################################
 	# 2b. Need to call API to set uptime SDT using deviceId *AND* WinSystemUptime DataSourceName
 	###############################################################################
 	
-	# Only the $data will need to change, but will then also need to regenerate signature and headers
-	
-	$data = '{"sdtType":1,"type":"DeviceDataSourceSDT","deviceId":' + $myDeviceID + ',"dataSourceName":"WinSystemUptime","comment":"SDT for graceful shutdown","startDateTime":' + $epoch + ',"endDateTime":' + $uptimeEndTime + '}';
-    $Sdt2Response = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
+	# Only the $data will need to change, then call the LmRestApi using the function
+	if ($SetUptimeSDT) {
+	    $data = '{"sdtType":1,"type":"DeviceDataSourceSDT","deviceId":' + $myDeviceID + ',"dataSourceName":"WinSystemUptime","comment":"SDT for graceful shutdown","startDateTime":' + $epoch + ',"endDateTime":' + $uptimeEndTime + '}';
+        $Sdt2Response = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
 
-	# Find status and body of response
-	$status = $Sdt2Response.status
-	$body = $Sdt2Response.data | ConvertTo-Json -Depth 5
+	    # Find status and body of response
+	    $status = $Sdt2Response.status
+	    $body = $Sdt2Response.data | ConvertTo-Json -Depth 5
 
-	<## >
-	# For Debug:
-	Write-Host "Status:$status"
-	Write-Host "Response:$body"
-	<##>	
+	    <## >
+	    # For Debug:
+	    Write-Host "Status:$status"
+	    Write-Host "Response:$body"
+	    <##>
+    }	
 
 	###############################################################################
 	# 3. Need to call API to set OpsNote using deviceId
 	###############################################################################
 
-	# request details
-	$httpVerb = 'POST'
-	$resourcePath = '/setting/opsnotes'
-	$queryParams = ''
-	$data = '{"note":"SDT for graceful shutdown","tags":[{"name":"shutdown"}],"scopes":[{"type":"device","deviceId":' + $myDeviceID + '}]}'
+	# Update the request detaiuls for the opsnotes endpoint.  Note that this requires Manage Ops Notes permission.
+    if($SetOpsNote) {
+	    $httpVerb = 'POST'
+	    $resourcePath = '/setting/opsnotes'
+	    $queryParams = ''
+	    $data = '{"note":"SDT for graceful shutdown","tags":[{"name":"shutdown"}],"scopes":[{"type":"device","deviceId":' + $myDeviceID + '}]}'
     
-    $OpNResponse = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
+        $OpNResponse = Get-LmRestApi -httpVerb $httpVerb -resourcePath $resourcePath -queryParams $queryParams -data $data -accessKey $accessKey -accessId $accessId -company $company -epoch $epoch
 
-	# Find status and body of response
-	$status = $OpNResponse.status
-	$body = $OpNResponse.data | ConvertTo-Json -Depth 5
+	    # Find status and body of response
+	    $status = $OpNResponse.status
+	    $body = $OpNResponse.data | ConvertTo-Json -Depth 5
 
-	<##
-	# For Debug:
-	Write-Host "Status:$status"
-	Write-Host "Response:$body"
-	##>
+	    <##
+	    # For Debug:
+	    Write-Host "Status:$status"
+	    Write-Host "Response:$body"
+	    ##>
+    }
 } 
